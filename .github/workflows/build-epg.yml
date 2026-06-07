@@ -1,0 +1,45 @@
+name: Build JP IPTV EPG
+
+# Rebuilds the merged EPG twice a day and publishes it to the `dist` branch,
+# which GitHub Pages serves (https://skinred78.github.io/jp-iptv-epg/jp-epg-merged.xml).
+# The `dist` branch is force-pushed as a single orphan commit each run, so the
+# ~20 MB file never accumulates in git history. Pages auto-redeploys on push.
+
+on:
+  schedule:
+    - cron: "0 7,19 * * *"   # 07:00 & 19:00 UTC  =  16:00 & 04:00 JST
+  workflow_dispatch: {}       # allow manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-epg
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build merged EPG
+        run: python merge_epg.py
+
+      - name: Publish to dist branch (served by GitHub Pages)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          touch .nojekyll
+          git checkout --orphan dist
+          git reset                       # unstage everything from the orphan
+          git add -f jp-epg-merged.xml .nojekyll
+          git commit -m "EPG $(date -u +%FT%TZ)"
+          git push -f origin dist
+          # GitHub Pages auto-redeploys from the dist branch on push (~1 min).
