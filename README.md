@@ -9,8 +9,12 @@ playlist — built for players that load only one EPG URL (e.g. **UHF**).
 Paste this into your player's EPG source field (paste it **once** — it updates itself):
 
 ```
-https://cdn.jsdelivr.net/gh/skinred78/jp-iptv-epg@dist/jp-epg-merged.xml
+https://skinred78.github.io/jp-iptv-epg/jp-epg-merged.xml
 ```
+
+Served by GitHub Pages from the `dist` branch as gzipped `application/xml`
+(~4 MB over the wire). jsDelivr was rejected as a host: it caps files at 20 MiB
+and caches force-pushed branches for up to 12 h, which breaks daily refresh.
 
 ## Why
 
@@ -37,8 +41,8 @@ channels — so the playlist works unmodified.
 ## How it stays fresh
 
 `.github/workflows/build-epg.yml` runs `merge_epg.py` twice daily (16:00 & 04:00
-JST), force-pushes the result to the `dist` branch, and purges the jsDelivr
-cache. The daily commit also keeps the scheduled workflow from being
+JST) and force-pushes the result to the `dist` branch; GitHub Pages auto-redeploys
+on push (~1 min). The daily commit also keeps the scheduled workflow from being
 auto-disabled for inactivity.
 
 ## Maintenance

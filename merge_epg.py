@@ -30,7 +30,12 @@ import gzip
 import re
 import copy
 import sys
+from datetime import datetime, timezone, timedelta
 import xml.etree.ElementTree as ET
+
+# jsDelivr rejects GitHub files over 20 MiB, and UHF has to parse this on an
+# Apple TV, so we keep the published file comfortably under this cap.
+SIZE_CAP = int(19.5 * 1024 * 1024)
 
 # Upstream feeds. karenda via jsDelivr (compact, gzipped) just for speed; the
 # others are fetched at full size — fine in CI.
@@ -90,6 +95,44 @@ def repaired_root(text):
         return None
 
 
+def trim_to_fit(merged):
+    """Trim the merged guide so it stays under SIZE_CAP, keeping as many forward
+    days as fit. Drops stale past programmes and bulky programme poster icons
+    (channel logos come from the playlist, so they aren't needed here)."""
+    channels = [e for e in merged if e.tag == "channel"]
+    programmes = [e for e in merged if e.tag == "programme"]
+    for pr in programmes:
+        for ic in pr.findall("icon"):
+            pr.remove(ic)
+
+    jst = datetime.now(timezone.utc) + timedelta(hours=9)  # Japanese broadcast day
+    lo = (jst - timedelta(days=1)).strftime("%Y%m%d")
+
+    def build(hi):
+        tv = ET.Element("tv", merged.attrib)
+        for c in channels:
+            tv.append(c)
+        kept = 0
+        for pr in programmes:
+            if lo <= pr.get("start", "")[:8] <= hi:
+                tv.append(pr)
+                kept += 1
+        return tv, kept
+
+    # Take the largest forward window that fits; self-adapts to daily density.
+    for fwd in range(8, 1, -1):
+        hi = (jst + timedelta(days=fwd)).strftime("%Y%m%d")
+        tv, kept = build(hi)
+        size = len(ET.tostring(tv, encoding="utf-8"))
+        if size <= SIZE_CAP:
+            print(f"  window {lo}..+{fwd}d: {kept} programmes, {size/1e6:.1f} MB (fits)")
+            return tv
+        print(f"  window {lo}..+{fwd}d: {size/1e6:.1f} MB over cap, trying shorter")
+    tv, kept = build((jst + timedelta(days=1)).strftime("%Y%m%d"))
+    print(f"  fallback {lo}..+1d: {kept} programmes")
+    return tv
+
+
 def main():
     with open(PLAYLIST, encoding="utf-8") as fh:
         needed = set(re.findall(r'tvg-id="([^"]*)"', fh.read()))
@@ -139,17 +182,29 @@ def main():
     else:
         print("  WARN: karenda unavailable — terrestrial aliases skipped", file=sys.stderr)
 
-    chans = len(out.findall("channel"))
-    progs = len(out.findall("programme"))
-    print(f"merged: {chans} channels, {progs} programmes")
+    print(f"merged (full): {len(out.findall('channel'))} channels, {len(out.findall('programme'))} programmes")
 
     # Safety net: never publish a broken/near-empty guide.
-    if chans < 50:
+    if len(out.findall("channel")) < 50:
         print("ERROR: too few channels — refusing to overwrite the EPG", file=sys.stderr)
         sys.exit(1)
 
-    ET.ElementTree(out).write("jp-epg-merged.xml", encoding="utf-8", xml_declaration=True)
-    print("WROTE jp-epg-merged.xml")
+    final = trim_to_fit(out)
+
+    # Serialize one element per line with a conventional XML declaration.
+    # ElementTree's default output is a single multi-megabyte line, which some
+    # player-side XML parsers (UHF included) reject; one element per line reads
+    # like a normal XMLTV file and adds only ~30 KB of newlines.
+    with open("jp-epg-merged.xml", "w", encoding="utf-8") as f:
+        f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+        attrs = "".join(f' {k}="{v}"' for k, v in final.attrib.items())
+        f.write(f"<tv{attrs}>\n")
+        for el in final:
+            f.write(ET.tostring(el, encoding="unicode"))
+            f.write("\n")
+        f.write("</tv>\n")
+    print(f"WROTE jp-epg-merged.xml: {len(final.findall('channel'))} channels, "
+          f"{len(final.findall('programme'))} programmes")
 
 
 if __name__ == "__main__":
