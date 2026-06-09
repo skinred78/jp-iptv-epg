@@ -40,13 +40,23 @@ SIZE_CAP = int(19.5 * 1024 * 1024)
 # Upstream feeds. karenda via jsDelivr (compact, gzipped) just for speed; the
 # others are fetched at full size — fine in CI.
 SOURCES = {
-    "karenda":      "https://cdn.jsdelivr.net/gh/karenda-jp/etc@main/guides.xml",
+    # raw.githubusercontent (not jsDelivr): no 20 MiB cap, and size is irrelevant
+    # server-side. jsDelivr 403s this file once it grows past 20 MiB.
+    "karenda":      "https://raw.githubusercontent.com/karenda-jp/etc/refs/heads/main/guides.xml",
     "mathlabroom":  "https://github.com/mathlabroom/SKyperfectv-EPG-/releases/download/latest/epg_ultimate.xml",
     "akariko":      "http://akariko.netgenx.site/epg/kai-epg.xml",
     "animenosekai": "https://animenosekai.github.io/japanterebi-xmltv/guide.xml",
 }
 
 PLAYLIST = "JP.m3u"  # committed snapshot; defines which channels to keep
+
+# Playlist mirror: gitflic (upstream host) is flaky/region-restricted from some
+# networks and serves the file via a query-string URL with no .m3u extension, which
+# some players reject. We mirror it to GitHub Pages with a clean .m3u URL and rewrite
+# its EPG header to our merged feed.
+PLAYLIST_SRC = "https://gitflic.ru/project/reaperc/jp-iptv/blob/raw?file=JP_Categories.m3u"
+PLAYLIST_FALLBACK = "JP_Categories.m3u"  # committed snapshot, used if gitflic is down
+PAGES_EPG_URL = "https://skinred78.github.io/jp-iptv-epg/jp-epg-merged.xml"
 
 # Tokyo terrestrials: playlist tvg-id -> karenda channel id to borrow programmes from
 ALIAS = {
@@ -93,6 +103,20 @@ def repaired_root(text):
     except ET.ParseError as e:
         print(f"  WARN: parse error after repair: {e}", file=sys.stderr)
         return None
+
+
+def mirror_playlist():
+    """Mirror the upstream playlist to jp-playlist.m3u (served by Pages) and rewrite
+    its url-tvg header to our merged EPG, so UHF loads both from a reliable host."""
+    text = fetch(PLAYLIST_SRC)
+    if text is None or "#EXTM3U" not in text:
+        print("  WARN: playlist fetch failed; using committed fallback", file=sys.stderr)
+        with open(PLAYLIST_FALLBACK, encoding="utf-8") as fh:
+            text = fh.read()
+    text = re.sub(r'url-tvg="[^"]*"', f'url-tvg="{PAGES_EPG_URL}"', text, count=1)
+    with open("jp-playlist.m3u", "w", encoding="utf-8") as fh:
+        fh.write(text)
+    print(f"WROTE jp-playlist.m3u: {text.count('#EXTINF')} channels (EPG header -> Pages)")
 
 
 def trim_to_fit(merged):
@@ -184,9 +208,13 @@ def main():
 
     print(f"merged (full): {len(out.findall('channel'))} channels, {len(out.findall('programme'))} programmes")
 
-    # Safety net: never publish a broken/near-empty guide.
-    if len(out.findall("channel")) < 50:
-        print("ERROR: too few channels — refusing to overwrite the EPG", file=sys.stderr)
+    # Safety net: a healthy build is ~158 channels. If a major source failed to
+    # download, abort (exit non-zero) so the Action keeps the last-good published
+    # file rather than overwriting it with a deficient one. Tolerates losing only
+    # animenosekai (3 ch); aborts if karenda/mathlabroom/akariko are missing.
+    if len(out.findall("channel")) < 145:
+        print(f"ERROR: only {len(out.findall('channel'))} channels — a source likely "
+              f"failed; refusing to overwrite the live EPG", file=sys.stderr)
         sys.exit(1)
 
     final = trim_to_fit(out)
@@ -205,6 +233,8 @@ def main():
         f.write("</tv>\n")
     print(f"WROTE jp-epg-merged.xml: {len(final.findall('channel'))} channels, "
           f"{len(final.findall('programme'))} programmes")
+
+    mirror_playlist()
 
 
 if __name__ == "__main__":

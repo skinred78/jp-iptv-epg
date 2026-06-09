@@ -6,15 +6,21 @@ playlist — built for players that load only one EPG URL (e.g. **UHF**).
 
 ## The one URL you need
 
-Paste this into your player's EPG source field (paste it **once** — it updates itself):
+Paste these into your player (paste **once** — they update themselves):
 
 ```
-https://skinred78.github.io/jp-iptv-epg/jp-epg-merged.xml
+Playlist / M3U:  https://skinred78.github.io/jp-iptv-epg/jp-playlist.m3u
+EPG source:      https://skinred78.github.io/jp-iptv-epg/jp-epg-merged.xml
 ```
 
-Served by GitHub Pages from the `dist` branch as gzipped `application/xml`
-(~4 MB over the wire). jsDelivr was rejected as a host: it caps files at 20 MiB
-and caches force-pushed branches for up to 12 h, which breaks daily refresh.
+Both served by GitHub Pages from the `dist` branch — the EPG as gzipped
+`application/xml` (~4 MB), the playlist as `audio/x-mpegurl`. The playlist is a
+mirror of the upstream `JP_Categories.m3u` with its `url-tvg` header rewritten to
+the EPG above; we mirror it because gitflic (upstream) is region-restricted/flaky
+from some networks and serves it via a query-string URL with no `.m3u` extension.
+
+jsDelivr was rejected as a host: it caps files at 20 MiB (karenda's source feed now
+exceeds that) and caches force-pushed branches for up to 12 h, breaking daily refresh.
 
 ## Why
 

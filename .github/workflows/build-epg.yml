@@ -39,7 +39,7 @@ jobs:
           touch .nojekyll
           git checkout --orphan dist
           git reset                       # unstage everything from the orphan
-          git add -f jp-epg-merged.xml .nojekyll
+          git add -f jp-epg-merged.xml jp-playlist.m3u .nojekyll
           git commit -m "EPG $(date -u +%FT%TZ)"
           git push -f origin dist
           # GitHub Pages auto-redeploys from the dist branch on push (~1 min).
