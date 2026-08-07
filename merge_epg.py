@@ -39,8 +39,13 @@ import xml.etree.ElementTree as ET
 # under a size that's proven to load.
 SIZE_CAP = int(19.5 * 1024 * 1024)
 
-# Upstream's own pre-merged EPG (channel ids already match the playlist).
-EPG_SRC = "https://jp-epg-26f0ce.gitlab.io/guide.xml"
+# Upstream's own pre-merged EPG (channel ids already match the playlist). The
+# real address lives in the playlist's own url-tvg header and can rotate (it
+# did on 2026-08-07: the old static /guide.xml path started serving a decoy
+# "stolen copy" notice instead of real listings, once upstream noticed
+# unauthorized mirrors hardcoding it). Read it from the playlist each run
+# instead of hardcoding it here; this is only the last-resort fallback.
+EPG_SRC_FALLBACK = "https://jp-epg-26f0ce.gitlab.io/guide.xml"
 
 # Playlist mirror: gitflic (upstream host) is flaky/region-restricted from some
 # networks and serves the file via a query-string URL with no .m3u extension, which
@@ -88,18 +93,25 @@ def repaired_root(text):
 def load_playlist():
     """Fetch the live playlist once (falling back to the committed snapshot if
     upstream is briefly down), and write the Pages mirror with its EPG header
-    rewritten to our trimmed feed. Returns the playlist text."""
+    rewritten to our trimmed feed. Returns (playlist text, upstream EPG url
+    taken from the playlist's own url-tvg header)."""
     text = fetch(PLAYLIST_SRC)
     if text is None or "#EXTM3U" not in text:
         print("  WARN: playlist fetch failed; using committed fallback", file=sys.stderr)
         with open(PLAYLIST_FALLBACK, encoding="utf-8") as fh:
             text = fh.read()
 
+    m = re.search(r'url-tvg="([^"]*)"', text)
+    epg_src = m.group(1) if m else EPG_SRC_FALLBACK
+    if m is None:
+        print("  WARN: playlist has no url-tvg header; using fallback EPG url",
+              file=sys.stderr)
+
     mirrored = re.sub(r'url-tvg="[^"]*"', f'url-tvg="{PAGES_EPG_URL}"', text, count=1)
     with open("jp-playlist.m3u", "w", encoding="utf-8") as fh:
         fh.write(mirrored)
     print(f"WROTE jp-playlist.m3u: {mirrored.count('#EXTINF')} channels (EPG header -> Pages)")
-    return text
+    return text, epg_src
 
 
 def trim_to_fit(merged):
@@ -141,11 +153,12 @@ def trim_to_fit(merged):
 
 
 def main():
-    playlist_text = load_playlist()
+    playlist_text, epg_src = load_playlist()
     needed = set(re.findall(r'tvg-id="([^"]*)"', playlist_text))
     print(f"playlist references {len(needed)} channel ids")
+    print(f"EPG source (from playlist header): {epg_src}")
 
-    root = repaired_root(fetch(EPG_SRC))
+    root = repaired_root(fetch(epg_src))
     if root is None:
         print("ERROR: upstream EPG unavailable — refusing to overwrite the live EPG",
               file=sys.stderr)
@@ -153,6 +166,7 @@ def main():
 
     out = ET.Element("tv", {"generator-info-name": "jp-iptv merged EPG"})
     n_ch = n_pr = 0
+    titles = {}
     for ch in root.findall("channel"):
         if ch.get("id") in needed:
             out.append(ch)
@@ -161,6 +175,8 @@ def main():
         if pr.get("channel") in needed:
             out.append(pr)
             n_pr += 1
+            t = pr.findtext("title") or ""
+            titles[t] = titles.get(t, 0) + 1
     print(f"merged (full): {n_ch} channels, {n_pr} programmes")
 
     # Safety net: this playlist has ~157 channels and the upstream EPG covers
@@ -171,6 +187,17 @@ def main():
         print(f"ERROR: only {n_ch} channels — upstream EPG or ids likely changed; "
               f"refusing to overwrite the live EPG", file=sys.stderr)
         sys.exit(1)
+
+    # Safety net: a real guide has mostly distinct programme titles. A decoy or
+    # placeholder feed (e.g. an anti-scraping notice) repeats one title across
+    # every slot — catch that shape even if channel/programme counts look fine.
+    if titles and n_pr:
+        top_title, top_count = max(titles.items(), key=lambda kv: kv[1])
+        if top_count / n_pr > 0.5:
+            print(f"ERROR: {top_count}/{n_pr} programmes share one title "
+                  f"({top_title[:60]!r}) — likely a placeholder/notice feed, not "
+                  f"real listings; refusing to overwrite the live EPG", file=sys.stderr)
+            sys.exit(1)
 
     final = trim_to_fit(out)
 
