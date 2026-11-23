@@ -45,7 +45,7 @@ SIZE_CAP = int(19.5 * 1024 * 1024)
 # "stolen copy" notice instead of real listings, once upstream noticed
 # unauthorized mirrors hardcoding it). Read it from the playlist each run
 # instead of hardcoding it here; this is only the last-resort fallback.
-EPG_SRC_FALLBACK = "https://jp-epg-26f0ce.gitlab.io/guide.xml"
+EPG_SRC_FALLBACK = "https://jp-epg-26f0ce.gitlab.io/k3v9qm/guide.xml.gz"
 
 # Playlist mirror: gitflic (upstream host) is flaky/region-restricted from some
 # networks and serves the file via a query-string URL with no .m3u extension, which
